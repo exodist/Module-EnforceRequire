@@ -37,7 +37,7 @@ use warnings;
 use Sub::Util qw/prototype set_prototype subname/;
 use List::Util qw/first/;
 
-our $VERSION = "0.000001";
+our $VERSION = '0.000002';
 
 our $ENFORCE = 0;
 my %OVERRIDE = (
