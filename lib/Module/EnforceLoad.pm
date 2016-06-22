@@ -164,6 +164,16 @@ my_test.pl
     # Now this will work fine.
     print Data::Dumper::Dumper('foo');
 
+=head1 HOW IT WORKS
+
+This module replaces C<CORE::GLOBAL::require> at which point anything that is
+loaded via C<use> or C<require> will be added to a dependancy tree structure.
+Once you run C<enforce()> it will walk the symbol table and replace all defined
+subs with wrapper that call the original. This will also start recording a list
+of modules that get required AFTER C<enforce()>. If you call any function
+without first loading the module it was defined in, an exception is thrown.
+Because of the tree initially built we can also track indirect loading.
+
 =head1 SOURCE
 
 The source code repository for Test2 can be found at

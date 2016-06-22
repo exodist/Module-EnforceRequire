@@ -39,6 +39,16 @@ SYNOPSIS
         # Now this will work fine.
         print Data::Dumper::Dumper('foo');
 
+HOW IT WORKS
+    This module replaces "CORE::GLOBAL::require" at which point anything
+    that is loaded via "use" or "require" will be added to a dependancy tree
+    structure. Once you run "enforce()" it will walk the symbol table and
+    replace all defined subs with wrapper that call the original. This will
+    also start recording a list of modules that get required AFTER
+    "enforce()". If you call any function without first loading the module
+    it was defined in, an exception is thrown. Because of the tree initially
+    built we can also track indirect loading.
+
 SOURCE
     The source code repository for Test2 can be found at
     http://github.com/exodist/Module-EnforceRequire.
