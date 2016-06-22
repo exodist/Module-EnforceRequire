@@ -1,70 +1,68 @@
 package Module::EnforceLoad;
-use strict;
-use warnings;
-use Carp qw/croak/;
-use Sub::Util qw/prototype set_prototype/;
 
-our %PRELOADS;
-our %RELOADS;
-our %OVERRIDE;
-our $STATE;
+my %LOAD_TREE;
+my %RELOADS;
 
-sub import {
-    my $class = shift;
-    my ($arg) = @_ or return;
+BEGIN {
+    our $MOD;
 
-    if ($arg eq 'preload') {
-        $STATE = $arg;
-    }
-    elsif ($arg eq 'start') {
-        $STATE = $arg;
-        %RELOADS = ();
-        replace_subs($_) for keys %PRELOADS;
-    }
-    else {
-        croak "Invalid arg: $arg";
-    }
-}
-
-{
-    no warnings 'redefine';
-    no warnings 'once';
-
-    my $nest = 0;
-    *CORE::GLOBAL::require = sub {
-        my $file = shift;
-
-        $nest++;
-
-        my $mod = $file;
+    sub file_to_mod {
+        my $mod = shift;
         $mod =~ s{/}{::}g;
         $mod =~ s{.pm$}{};
+        return $mod;
+    }
 
-        if ($STATE eq 'preload') {
-            unless ($nest > 1 || $mod eq __PACKAGE__) {
-                print "PRELOAD: $mod\n";
-                $PRELOADS{$mod}++;
-            }
+    *CORE::GLOBAL::require = sub {
+        my $file = shift;
+        return CORE::require($file) if $file =~ m/^[0-9\.]+$/;
+
+        my $mod = file_to_mod($file);
+
+        my @stack = ($mod);
+        while (my $m = shift @stack) {
+            $RELOADS{$m}++;
+            push @stack => keys %{$LOAD_TREE{$m}};
         }
-        else {
-            print "RELOAD: $mod\n";
-            $RELOADS{$mod}++;
-        }
-
-        my $ok = eval { CORE::require($file) };
-
-        $nest--;
-
-        die $@ unless $ok;
-
-        $ok;
+        $LOAD_TREE{$mod} = {};
+        $LOAD_TREE{$MOD}->{$mod} = $LOAD_TREE{$mod} if $MOD;
+        local $MOD = $mod;
+        CORE::require($file);
     };
 }
 
-sub replace_subs {
-    my $mod = shift;
+use strict;
+use warnings;
+use Sub::Util qw/prototype set_prototype/;
+use List::Util qw/first/;
 
+my @PATTERNS;
+my %OVERRIDE;
+
+sub import {
+    my $class = shift;
+    push @PATTERNS => @_;
+
+    my $caller = caller;
+    no strict 'refs';
+    *{"$caller\::enforce"} = \&enforce;
+}
+
+sub debug {
+    require Data::Dumper;
+    print Data::Dumper::Dumper(\%LOAD_TREE);
+}
+
+sub enforce {
+    %RELOADS = ();
+    replace_subs($_) for keys %INC;
+}
+
+sub replace_subs {
+    my $file = shift;
+    my $mod = file_to_mod($file);
     return if $OVERRIDE{$mod}++;
+    return unless first { $mod =~ $_ } @PATTERNS;
 
     my $stash;
     {
@@ -78,7 +76,7 @@ sub replace_subs {
         my $prototype = prototype($orig);
 
         my $new = sub {
-            unless ($RELOADS{$mod}) {
+            unless ($RELOADS{$mod} || $mod eq __PACKAGE__) {
                 my ($pkg, $file, $line) = caller;
                 die "Never loaded $mod, but trying to use $mod\::$i() at $file line $line.\n";
             }
