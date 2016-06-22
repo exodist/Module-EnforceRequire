@@ -2,6 +2,7 @@ package Module::EnforceLoad;
 
 my %LOAD_TREE;
 my %RELOADS;
+our $DEBUG = 0;
 
 BEGIN {
     our $MOD;
@@ -33,36 +34,37 @@ BEGIN {
 
 use strict;
 use warnings;
-use Sub::Util qw/prototype set_prototype/;
+use Sub::Util qw/prototype set_prototype subname/;
 use List::Util qw/first/;
 
-my @PATTERNS;
-my %OVERRIDE;
+our $VERSION = "0.000001";
+
+our $ENFORCE = 0;
+my %OVERRIDE = (
+    __PACKAGE__,      1,
+    'UNIVERSAL'    => 1,
+    'CORE'         => 1,
+    'CORE::GLOBAL' => 1,
+);
 
 sub import {
     my $class = shift;
-    push @PATTERNS => @_;
-
     my $caller = caller;
     no strict 'refs';
     *{"$caller\::enforce"} = \&enforce;
 }
 
-sub debug {
-    require Data::Dumper;
-    print Data::Dumper::Dumper(\%LOAD_TREE);
-}
-
 sub enforce {
     %RELOADS = ();
-    replace_subs($_) for keys %INC;
+    replace_subs(scalar caller);
+    replace_subs(file_to_mod($_)) for keys %LOAD_TREE;
+    $ENFORCE = 1;
 }
 
 sub replace_subs {
-    my $file = shift;
-    my $mod = file_to_mod($file);
+    my $mod = shift;
     return if $OVERRIDE{$mod}++;
-    return unless first { $mod =~ $_ } @PATTERNS;
+    local $ENFORCE = 0;
 
     my $stash;
     {
@@ -72,13 +74,33 @@ sub replace_subs {
 
     for my $i (keys %$stash) {
         my $orig = $mod->can($i) or next;
-        next if $OVERRIDE{$orig};
+        next if $OVERRIDE{"$mod\::$i"}++;
+        next if $i eq 'DESTROY';
+        next if $i eq 'can';
         my $prototype = prototype($orig);
 
         my $new = sub {
-            unless ($RELOADS{$mod} || $mod eq __PACKAGE__) {
+            if ($ENFORCE && !$RELOADS{$mod}) {
+                $ENFORCE = 0;
+
                 my ($pkg, $file, $line) = caller;
-                die "Never loaded $mod, but trying to use $mod\::$i() at $file line $line.\n";
+                my $name = subname($orig);
+                my $pname = $name =~ s/::[^:]+$//r;
+                my $str = "Tried to use $name without loading $pname at $file line $line.\n";
+                my $l = 1;
+                while (my @caller = caller($l++)) {
+                    $str .= "    $caller[3] called at $caller[1] line $caller[2].\n";
+                }
+
+                if ($DEBUG) {
+                    require Data::Dumper;
+                    $str .= Data::Dumper::Dumper({
+                        LOAD_TREE => \%LOAD_TREE,
+                        RELOADS   => \%RELOADS,
+                    });
+                }
+
+                die $str;
             }
             goto &$orig;
         };
@@ -87,8 +109,89 @@ sub replace_subs {
         no strict 'refs';
         no warnings 'redefine';
         *{"$mod\::$i"} = $new;
-        $OVERRIDE{$new}++;
     }
 }
 
 1;
+
+__END__
+
+
+=pod
+
+=encoding UTF-8
+
+=head1 NAME
+
+Module::EnforceLoad - Make sure your modules load their deps in preload
+environments.
+
+=head1 DESCRIPTION
+
+Unit tests are good. Unit tests can also be slow. Unit tests run faster if you
+preload all your modules and then fork for each test. This scenario will fail
+to catch when you forget to load a dependancy as the preload will satisfy it.
+This can lead to errors you find in production instead of tests.
+
+This module helps with the problem in the last paragraph. You load this module
+B<FIRST> then load your preloads, then call C<enforce()>. From that point on
+the code will die if you use a sub defined in one of your preloads, unless
+something uses C<use> or C<require> to try to load the module after you call
+C<enforce()>.
+
+=head1 SYNOPSIS
+
+    package My::Preloader;
+    use Module::EnforceLoad;
+
+    # Preloads
+    use Moose;
+    use Scalar::Util;
+    use Data::Dumper;
+
+    enforce();
+
+    do 'my_test.pl';
+
+my_test.pl
+
+    # Will die, despite being preloaded
+    # (we use eval to turn it into a warning for this example)
+    eval { print Data::Dumper::Dumper('foo'); 1 } or warn $@;
+
+    require Data::Dumper;
+
+    # Now this will work fine.
+    print Data::Dumper::Dumper('foo');
+
+=head1 SOURCE
+
+The source code repository for Test2 can be found at
+F<http://github.com/exodist/Module-EnforceRequire>.
+
+=head1 MAINTAINERS
+
+=over 4
+
+=item Chad Granum E<lt>exodist@cpan.orgE<gt>
+
+=back
+
+=head1 AUTHORS
+
+=over 4
+
+=item Chad Granum E<lt>exodist@cpan.orgE<gt>
+
+=back
+
+=head1 COPYRIGHT
+
+Copyright 2016 Chad Granum E<lt>exodist@cpan.orgE<gt>.
+
+This program is free software; you can redistribute it and/or
+modify it under the same terms as Perl itself.
+
+See F<http://dev.perl.org/licenses/>
+
+=cut
