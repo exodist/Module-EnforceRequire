@@ -176,7 +176,7 @@ Because of the tree initially built we can also track indirect loading.
 
 =head1 SOURCE
 
-The source code repository for Test2 can be found at
+The source code repository for this module can be found at
 F<http://github.com/exodist/Module-EnforceRequire>.
 
 =head1 MAINTAINERS
